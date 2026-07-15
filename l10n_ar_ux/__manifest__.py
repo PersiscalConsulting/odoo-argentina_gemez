@@ -9,7 +9,7 @@
     'summary': '',
     'depends': [
         'l10n_ar',
-        'account_accountant',
+        'account_ux',
         # 'l10n_ar_withholding',
     ],
     'data': [
