@@ -38,6 +38,8 @@
                             <li>ARBA: por lo general no es necesario cargarlo aquí ya que las alícuotas se obtienen automáticamente mediante webservice.
                                 Si igualmente desea cargarlo, debe subir el archivo zip que descarga de arba y que tiene nombre de forma "PadronRGSMMAAAA.zip
                             </li>
+                            <li>AGIP: debe subir el archivo zip que descarga de AGIP, con nombre de forma "PadronRGSMMAAAA.zip" (mismo formato de nombre que ARBA).
+                            </li>
                         </ul>
                     </p>
                 </sheet>
