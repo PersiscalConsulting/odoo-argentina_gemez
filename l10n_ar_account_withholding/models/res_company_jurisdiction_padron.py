@@ -108,23 +108,26 @@ class ResCompanyJurisdictionPadron(models.Model):
             res += [(padron.id, name)]
         return res
 
-    def descompress_file(self, file_padron):
+    def descompress_file(self, file_padron, ruta_extraccion):
+        """Descomprime el ZIP del padrón (bytes en memoria, sin volcar el ZIP
+        crudo a disco) dentro de `ruta_extraccion`.
+
+        `ruta_extraccion` debe ser un directorio único por llamada (ver
+        `_get_aliquit`, que la crea con `tempfile.TemporaryDirectory` y la
+        borra sola al salir) — antes esto extraía siempre a `/tmp` compartido
+        con TODO el proceso Odoo y nunca lo limpiaba, lo que (a) llenaba el
+        disco con el uso normal (cada partner nuevo del padrón dejaba un
+        archivo huérfano) y (b) podía reusar por error el archivo de otro
+        padrón/compañía ya extraído antes, si el nombre matcheaba el patrón
+        de búsqueda de `find_file`.
+        """
         _logger.log(25, "Descompress zip file")
-        ruta_extraccion = "/tmp"
         try:
-            file = base64.b64decode(file_padron)
-        except:
-            file = base64.decodestring(file_padron)
-        fobj = tempfile.NamedTemporaryFile(delete=False)
-        fname = fobj.name
-        fobj.write(file)
-        fobj.close()
-        f = open(fname, 'r+b')
-        data = f.read()
-        f.write(base64.b64decode(file_padron))
-        with zipfile.ZipFile(f, 'r') as zip_file:
+            file_bytes = base64.b64decode(file_padron)
+        except Exception:
+            file_bytes = base64.decodestring(file_padron)
+        with zipfile.ZipFile(BytesIO(file_bytes)) as zip_file:
             zip_file.extractall(path=ruta_extraccion)
-            zip_file.close()
 
     @staticmethod
     def _normalize_cuit(cuit):
@@ -235,43 +238,45 @@ class ResCompanyJurisdictionPadron(models.Model):
                 _("El padron para (%s) no está implementado.") % self.jurisdiction_id.name
             )
 
-        if layout['single_file']:
-            path_file = self.find_file("/tmp/")
-            if not path_file:
-                self.descompress_file(self.file_padron)
-                path_file = self.find_file("/tmp/")
-            if not path_file:
-                return False, 0.0, 0.0
-            nro, aliquot_ret, aliquot_per = self.find_aliquot_multi(
-                "/tmp/" + path_file, partner.vat,
-                layout['cuit_idx'], layout['aliquot_ret_idx'], layout['aliquot_per_idx'],
-            )
-            aliquot_ret = aliquot_ret and aliquot_ret.replace(",", ".")
-            aliquot_per = aliquot_per and aliquot_per.replace(",", ".")
-            return nro, aliquot_ret, aliquot_per
+        # Directorio único por llamada, borrado solo al salir del bloque —
+        # ver docstring de descompress_file. Se extrae siempre de nuevo acá
+        # (ya no se reusa nada de una llamada anterior): el costo es
+        # descomprimir un TXT chico por partner nuevo/mes, a cambio de no
+        # dejar nada tirado ni arriesgarse a leer el padrón equivocado.
+        with tempfile.TemporaryDirectory(prefix='padron_%s_' % self.id) as tmpdir:
+            self.descompress_file(self.file_padron, tmpdir)
 
-        # Jurisdicciones con archivos separados de percepción y retención
-        # (ARBA): comportamiento original, con guard contra archivo faltante.
-        padron_types = ["Per", "Ret"]
-        nro = False
-        aliquot_ret = 0.0
-        aliquot_per = 0.0
-        for padron_type in padron_types:
-            path_file = self.find_file("/tmp/", padron_type)
-            if not path_file:
-                self.descompress_file(self.file_padron)
-                path_file = self.find_file("/tmp/", padron_type)
-            if not path_file:
-                # Archivo de este tipo no encontrado en el zip: se omite en
-                # lugar de romper con TypeError concatenando "/tmp/" + False.
-                continue
-            nro_found, aliquot = self.find_aliquot(
-                "/tmp/" + path_file, partner.vat,
-                layout['cuit_idx'], layout['nro_idx'], layout['aliquot_ret_idx'],
-            )
-            nro = nro_found
-            if padron_type == "Per":
-                aliquot_per = aliquot and aliquot.replace(",", ".")
-            else:
-                aliquot_ret = aliquot and aliquot.replace(",", ".")
-        return nro, aliquot_ret, aliquot_per
+            if layout['single_file']:
+                path_file = self.find_file(tmpdir)
+                if not path_file:
+                    return False, 0.0, 0.0
+                nro, aliquot_ret, aliquot_per = self.find_aliquot_multi(
+                    os.path.join(tmpdir, path_file), partner.vat,
+                    layout['cuit_idx'], layout['aliquot_ret_idx'], layout['aliquot_per_idx'],
+                )
+                aliquot_ret = aliquot_ret and aliquot_ret.replace(",", ".")
+                aliquot_per = aliquot_per and aliquot_per.replace(",", ".")
+                return nro, aliquot_ret, aliquot_per
+
+            # Jurisdicciones con archivos separados de percepción y retención
+            # (ARBA): comportamiento original, con guard contra archivo faltante.
+            padron_types = ["Per", "Ret"]
+            nro = False
+            aliquot_ret = 0.0
+            aliquot_per = 0.0
+            for padron_type in padron_types:
+                path_file = self.find_file(tmpdir, padron_type)
+                if not path_file:
+                    # Archivo de este tipo no encontrado en el zip: se omite en
+                    # lugar de romper con TypeError concatenando el path con False.
+                    continue
+                nro_found, aliquot = self.find_aliquot(
+                    os.path.join(tmpdir, path_file), partner.vat,
+                    layout['cuit_idx'], layout['nro_idx'], layout['aliquot_ret_idx'],
+                )
+                nro = nro_found
+                if padron_type == "Per":
+                    aliquot_per = aliquot and aliquot.replace(",", ".")
+                else:
+                    aliquot_ret = aliquot and aliquot.replace(",", ".")
+            return nro, aliquot_ret, aliquot_per
