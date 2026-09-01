@@ -1,9 +1,7 @@
 from odoo import models, fields, api, _
 from odoo.exceptions import ValidationError
-from io import BytesIO
+from io import BytesIO, TextIOWrapper
 import zipfile
-import tempfile
-import os
 import re
 import logging
 import base64
@@ -108,26 +106,23 @@ class ResCompanyJurisdictionPadron(models.Model):
             res += [(padron.id, name)]
         return res
 
-    def descompress_file(self, file_padron, ruta_extraccion):
-        """Descomprime el ZIP del padrón (bytes en memoria, sin volcar el ZIP
-        crudo a disco) dentro de `ruta_extraccion`.
+    def descompress_file(self, file_padron):
+        """Abre el ZIP del padrón en memoria y devuelve el `zipfile.ZipFile`
+        listo para leer sus miembros en streaming, sin extraer nada a disco.
 
-        `ruta_extraccion` debe ser un directorio único por llamada (ver
-        `_get_aliquit`, que la crea con `tempfile.TemporaryDirectory` y la
-        borra sola al salir) — antes esto extraía siempre a `/tmp` compartido
-        con TODO el proceso Odoo y nunca lo limpiaba, lo que (a) llenaba el
-        disco con el uso normal (cada partner nuevo del padrón dejaba un
-        archivo huérfano) y (b) podía reusar por error el archivo de otro
-        padrón/compañía ya extraído antes, si el nombre matcheaba el patrón
-        de búsqueda de `find_file`.
+        El padrón real de AGIP es esencialmente un único TXT de varios
+        cientos de MB (~458 MB sin comprimir) — `extractall()` volcaba ese
+        contenido entero a `/tmp` de una sola vez, lo que agota la cuota de
+        `/tmp` del contenedor (`OSError: No space left on device`) aunque
+        ya no leakeara entre llamadas. Leer cada miembro vía `ZipFile.open()`
+        desacopla el proceso del tamaño real del archivo.
         """
-        _logger.log(25, "Descompress zip file")
+        _logger.log(25, "Opening padron zip file in memory")
         try:
             file_bytes = base64.b64decode(file_padron)
         except Exception:
             file_bytes = base64.decodestring(file_padron)
-        with zipfile.ZipFile(BytesIO(file_bytes)) as zip_file:
-            zip_file.extractall(path=ruta_extraccion)
+        return zipfile.ZipFile(BytesIO(file_bytes))
 
     @staticmethod
     def _normalize_cuit(cuit):
@@ -142,10 +137,12 @@ class ResCompanyJurisdictionPadron(models.Model):
         """
         return re.sub(r'\D', '', cuit or '')
 
-    def find_aliquot(self, path, cuit, cuit_idx, nro_idx, aliquot_idx):
+    def find_aliquot(self, zip_file, name, cuit, cuit_idx, nro_idx, aliquot_idx):
         """Busca la alícuota y el número de comprobante de un CUIT en un
-        archivo de padrón con un único valor de alícuota por línea (usado
-        por jurisdicciones con archivos separados por tipo, ej. ARBA).
+        miembro `name` del `zip_file`, con un único valor de alícuota por
+        línea (usado por jurisdicciones con archivos separados por tipo,
+        ej. ARBA). Lee el miembro en streaming directo del ZIP, sin
+        extraerlo a disco.
 
         Devuelve (nro, aliq) = (False, False) si el CUIT no aparece en el
         archivo, para que el llamador pueda distinguir "no encontrado" de
@@ -154,7 +151,7 @@ class ResCompanyJurisdictionPadron(models.Model):
         """
         cuit_normalizado = self._normalize_cuit(cuit)
         max_idx = max(cuit_idx, nro_idx or 0, aliquot_idx)
-        with open(path, "r", encoding="latin-1") as fp:
+        with zip_file.open(name) as raw, TextIOWrapper(raw, encoding="latin-1") as fp:
             for line in fp:
                 values = line.split(";")
                 if len(values) <= max_idx:
@@ -164,12 +161,13 @@ class ResCompanyJurisdictionPadron(models.Model):
                     return nro, values[aliquot_idx].strip()
         return False, False
 
-    def find_aliquot_multi(self, path, cuit, cuit_idx, aliquot_ret_idx, aliquot_per_idx):
-        """Busca en un único archivo de padrón (una misma línea trae ambas
-        alícuotas, percepción y retención) la alícuota y el "número de
-        comprobante" de un CUIT. Usado por jurisdicciones de archivo único
-        (AGIP), cuyo padrón no separa percepción y retención en archivos
-        distintos como ARBA.
+    def find_aliquot_multi(self, zip_file, name, cuit, cuit_idx, aliquot_ret_idx, aliquot_per_idx):
+        """Busca en un miembro `name` del `zip_file` (único archivo de padrón,
+        una misma línea trae ambas alícuotas, percepción y retención) la
+        alícuota y el "número de comprobante" de un CUIT. Usado por
+        jurisdicciones de archivo único (AGIP), cuyo padrón no separa
+        percepción y retención en archivos distintos como ARBA. Lee el
+        miembro en streaming directo del ZIP, sin extraerlo a disco.
 
         Devuelve (nro, aliq_ret, aliq_per) = (False, False, False) si el
         CUIT no aparece en el archivo — mismo contrato que `find_aliquot`,
@@ -177,7 +175,7 @@ class ResCompanyJurisdictionPadron(models.Model):
         """
         cuit_normalizado = self._normalize_cuit(cuit)
         max_idx = max(cuit_idx, aliquot_ret_idx, aliquot_per_idx)
-        with open(path, "r", encoding="latin-1") as fp:
+        with zip_file.open(name) as raw, TextIOWrapper(raw, encoding="latin-1") as fp:
             for line in fp:
                 values = line.split(";")
                 if len(values) <= max_idx:
@@ -188,8 +186,9 @@ class ResCompanyJurisdictionPadron(models.Model):
                     return cuit_normalizado, values[aliquot_ret_idx].strip(), values[aliquot_per_idx].strip()
         return False, False, False
 
-    def find_file(self, rootdir, type_code=None):
-        """Busca el archivo del padrón dentro del directorio de extracción.
+    def find_file(self, zip_file, type_code=None):
+        """Busca el nombre del miembro del padrón dentro del `zip_file`
+        abierto (sin extraer nada a disco).
 
         Si `type_code` se especifica (jurisdicciones con archivos separados
         por tipo, ej. ARBA "Per"/"Ret"), mantiene el comportamiento original
@@ -203,21 +202,20 @@ class ResCompanyJurisdictionPadron(models.Model):
         patrón de nombre que podría no matchear.
         """
         res = False
+        names = zip_file.namelist()
         if type_code:
             date = str(self.l10n_ar_padron_from_date.month) + \
                 str(self.l10n_ar_padron_from_date.year)
             pattern = "%s.{1}|.TXT\Z" % type_code + date
-            for subdir, dirs, files in os.walk(rootdir):
-                for f in files:
-                    if re.search(pattern, f):
-                        res = f
-                        break
+            for f in names:
+                if re.search(pattern, f):
+                    res = f
+                    break
         else:
-            for subdir, dirs, files in os.walk(rootdir):
-                for f in files:
-                    if f.upper().endswith(".TXT"):
-                        res = f
-                        break
+            for f in names:
+                if f.upper().endswith(".TXT"):
+                    res = f
+                    break
         return res
 
     def _get_aliquit(self, partner):
@@ -238,20 +236,18 @@ class ResCompanyJurisdictionPadron(models.Model):
                 _("El padron para (%s) no está implementado.") % self.jurisdiction_id.name
             )
 
-        # Directorio único por llamada, borrado solo al salir del bloque —
-        # ver docstring de descompress_file. Se extrae siempre de nuevo acá
-        # (ya no se reusa nada de una llamada anterior): el costo es
-        # descomprimir un TXT chico por partner nuevo/mes, a cambio de no
-        # dejar nada tirado ni arriesgarse a leer el padrón equivocado.
-        with tempfile.TemporaryDirectory(prefix='padron_%s_' % self.id) as tmpdir:
-            self.descompress_file(self.file_padron, tmpdir)
+        # ZIP abierto en memoria, leído en streaming miembro a miembro — ver
+        # docstring de descompress_file. Nada se extrae a disco, así que el
+        # proceso no depende del tamaño real del padrón (el de AGIP puede
+        # rondar los 450+ MB sin comprimir).
+        with self.descompress_file(self.file_padron) as zip_file:
 
             if layout['single_file']:
-                path_file = self.find_file(tmpdir)
-                if not path_file:
+                name = self.find_file(zip_file)
+                if not name:
                     return False, 0.0, 0.0
                 nro, aliquot_ret, aliquot_per = self.find_aliquot_multi(
-                    os.path.join(tmpdir, path_file), partner.vat,
+                    zip_file, name, partner.vat,
                     layout['cuit_idx'], layout['aliquot_ret_idx'], layout['aliquot_per_idx'],
                 )
                 aliquot_ret = aliquot_ret and aliquot_ret.replace(",", ".")
@@ -265,13 +261,13 @@ class ResCompanyJurisdictionPadron(models.Model):
             aliquot_ret = 0.0
             aliquot_per = 0.0
             for padron_type in padron_types:
-                path_file = self.find_file(tmpdir, padron_type)
-                if not path_file:
+                name = self.find_file(zip_file, padron_type)
+                if not name:
                     # Archivo de este tipo no encontrado en el zip: se omite en
                     # lugar de romper con TypeError concatenando el path con False.
                     continue
                 nro_found, aliquot = self.find_aliquot(
-                    os.path.join(tmpdir, path_file), partner.vat,
+                    zip_file, name, partner.vat,
                     layout['cuit_idx'], layout['nro_idx'], layout['aliquot_ret_idx'],
                 )
                 nro = nro_found
