@@ -179,10 +179,28 @@ class AccountTax(models.Model):
             cdba_tag = self.env.ref('l10n_ar_ux.tag_tax_jurisdiccion_904')
             if padron_file:
                 nro, alicuot_ret, alicuot_per = padron_file._get_aliquit(commercial_partner)
+                # FIX 2026-09-02: `float(x) or fallback` no distingue "no
+                # encontrado en el padrón" (alicuot_ret/per == False) de
+                # "encontrado con alícuota real 0" (ej. "0.00") — float(0.0)
+                # también es falsy en Python, así que un partner SÍ inscripto
+                # con alícuota 0% terminaba igual con el fallback de "no
+                # inscripto" en vez de 0%. Reproducido en vivo con un CUIT
+                # real (20000000028) que tiene 0,00 genuino en el padrón de
+                # AGIP: la percepción no se calculaba en la factura. Se
+                # distingue explícitamente False/'' (no encontrado) de
+                # cualquier otro valor (incluido "0.00", que sí es real).
+                if alicuot_ret in (False, ''):
+                    alicuota_retencion = company.arba_alicuota_no_sincripto_retencion
+                else:
+                    alicuota_retencion = float(alicuot_ret)
+                if alicuot_per in (False, ''):
+                    alicuota_percepcion = company.arba_alicuota_no_sincripto_percepcion
+                else:
+                    alicuota_percepcion = float(alicuot_per)
                 return partner.arba_alicuot_ids.sudo().create({
                     'numero_comprobante': nro or 'Alícuota no inscripto',
-                    'alicuota_retencion': float(alicuot_ret) or company.arba_alicuota_no_sincripto_retencion,
-                    'alicuota_percepcion': float(alicuot_per) or company.arba_alicuota_no_sincripto_percepcion,
+                    'alicuota_retencion': alicuota_retencion,
+                    'alicuota_percepcion': alicuota_percepcion,
                     'partner_id': commercial_partner.id,
                     'company_id': company.id,
                     'tag_id': padron_file.jurisdiction_id.id,
