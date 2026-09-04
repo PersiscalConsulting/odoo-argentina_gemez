@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_partner_form_l10n_ar_padron" model="ir.ui.view">
+        <field name="name">res.partner.form.l10n_ar.padron</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="account.view_partner_property_form"/>
+        <field name="arch" type="xml">
+            <group id="invoice_send_settings" position="after">
+                <group string="Alícuotas IIBB (Padrón)" invisible="'AR' not in fiscal_country_codes or not is_company">
+                    <field name="l10n_ar_padron_aliquot_ids" nolabel="1" colspan="2">
+                        <list editable="bottom">
+                            <field name="state_id"/>
+                            <field name="from_date"/>
+                            <field name="to_date"/>
+                            <field name="alicuota_percepcion"/>
+                            <field name="alicuota_retencion"/>
+                            <field name="is_manual"/>
+                            <field name="numero_comprobante" optional="hide"/>
+                            <field name="company_id" column_invisible="True"/>
+                        </list>
+                    </field>
+                </group>
+            </group>
+        </field>
+    </record>
+
+</odoo>

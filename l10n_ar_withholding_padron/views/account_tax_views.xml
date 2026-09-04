@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- La vista nativa de l10n_ar_withholding solo muestra `l10n_ar_state_id`
+         cuando `l10n_ar_tax_type` es de retención IIBB (`iibb_untaxed` /
+         `iibb_total`), porque esa vista está pensada para retenciones de
+         pago. Para percepciones de venta (`type_tax_use = 'sale'`) ese
+         campo existe en el modelo (viene de `l10n_ar_withholding`) pero
+         queda oculto: lo exponemos acá para poder marcar la jurisdicción
+         también en impuestos de venta, junto con `ratio`. -->
+    <record id="view_tax_form_l10n_ar_padron" model="ir.ui.view">
+        <field name="name">account.tax.form.l10n_ar.padron.inherit</field>
+        <field name="model">account.tax</field>
+        <field name="inherit_id" ref="account.view_tax_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='amount']/.." position="after">
+                <field
+                    name="l10n_ar_state_id"
+                    string="Jurisdicción IIBB"
+                    invisible="country_code != 'AR' or type_tax_use != 'sale'"
+                    options="{'no_create': True}"
+                />
+                <field
+                    name="ratio"
+                    invisible="country_code != 'AR' or not l10n_ar_state_id"
+                />
+            </xpath>
+        </field>
+    </record>
+
+</odoo>
