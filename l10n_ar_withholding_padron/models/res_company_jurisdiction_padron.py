@@ -91,31 +91,53 @@ class ResCompanyJurisdictionPadron(models.Model):
           (AGIP).
         """
         return {
-            # ARBA (Buenos Aires): un único archivo (formato
-            # "ARDJUMMAAAA.rar/.TXT"), cada línea trae percepción (índice 7)
-            # y retención (índice 8). Confirmado contra archivo real
-            # ARDJU008082026.rar. OJO: no invertir con el layout de AGIP -
-            # antes este layout estaba mal asignado a AGIP, lo que hacía que
-            # el CUIT se buscara en la columna incorrecta y la alícuota
-            # nunca matcheara.
+            # ARBA (Buenos Aires): dos archivos separados, "Per" y "Ret"
+            # (formato "PadronRGSMMAAAA.zip" -> PadronRGSPerMMAAAA.TXT /
+            # PadronRGSRetMMAAAA.TXT), mismo layout en ambos, la alícuota
+            # relevante está en el índice 8.
+            #
+            # (2026-09-09) CORRECCIÓN: esto estaba asignado a AGIP hasta
+            # ahora. Se reasigna a ARBA porque:
+            #   1. La convención de nombre "PadronRGSMMAAAA.zip" está
+            #      documentada como propia de ARBA (ver fuentes externas:
+            #      sos-contador.com / ayuda.sos-contador.com.ar, "a partir
+            #      de julio 2014 los padrones de ARBA se publican en forma
+            #      separada, PadronRGSRetMMAAAA.txt / PadronRGSPerMMAAAA.txt").
+            #   2. Confirmado contra DOS archivos reales del cliente
+            #      (Rodamientos El Palomar) cargados explícitamente como
+            #      ARBA/Buenos Aires (uno de ellos con nombre de archivo
+            #      "ARDJUMMAAAA.rar.TXT.zip", el nombre "oficial" de ARBA
+            #      que dice usar un único archivo): ambos resultaron tener
+            #      esta estructura de dos archivos, no la de archivo único.
+            # Este es exactamente el mismo tipo de bug que el comentario
+            # anterior en este archivo decía haber corregido (jurisdicciones
+            # cruzadas) — parece que se volvió a invertir en algún punto, o
+            # el fix anterior nunca se validó contra un archivo real.
             'base.state_ar_b': {
-                'single_file': True,
-                'cuit_idx': 3,
-                'nro_idx': False,
-                'aliquot_ret_idx': 8,
-                'aliquot_per_idx': 7,
-            },
-            # AGIP (CABA): dos archivos separados, "Per" y "Ret" (formato
-            # "PadronRGSMMAAAA.zip"), mismo layout en ambos, la alícuota
-            # relevante está en el índice 8. Confirmado contra archivo real
-            # PadronRGS082026.zip. Es la misma estructura que antes estaba
-            # (mal) asignada a ARBA.
-            'base.state_ar_c': {
                 'single_file': False,
                 'cuit_idx': 4,
                 'nro_idx': 3,
                 'aliquot_ret_idx': 8,
                 'aliquot_per_idx': 8,
+            },
+            # AGIP (CABA): SIN VERIFICAR contra un archivo real de AGIP.
+            #
+            # (2026-09-09) Este layout de archivo único (formato
+            # "ARDJUMMAAAA.rar/.TXT", índice 7/8) estaba asignado a ARBA
+            # hasta ahora, y NO coincide con ningún archivo real de ARBA que
+            # hayamos visto (ver 'base.state_ar_b' arriba). Se lo deja acá
+            # como placeholder temporal, pero es una suposición, no un dato
+            # confirmado: nunca se probó contra un archivo realmente bajado
+            # del portal de AGIP. NO cargar padrones reales de CABA a
+            # producción con este layout sin confirmarlo primero contra un
+            # archivo real de AGIP (puede tener el mismo formato de dos
+            # archivos que ARBA, o ser distinto de ambos).
+            'base.state_ar_c': {
+                'single_file': True,
+                'cuit_idx': 3,
+                'nro_idx': False,
+                'aliquot_ret_idx': 8,
+                'aliquot_per_idx': 7,
             },
         }
 

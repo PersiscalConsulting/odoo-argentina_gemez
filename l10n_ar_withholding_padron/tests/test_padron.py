@@ -28,14 +28,18 @@ ADHOC_CUIT_DASHED = "30-71429569-8"
 OTHER_CUIT = "20111111112"
 
 
-def _arba_line(cuit, per, ret):
-    """Layout ARBA (archivo único): col3=CUIT, col7=percepción, col8=retención."""
-    return "h0;h1;h2;%s;h4;h5;h6;%s;%s\n" % (cuit, per, ret)
-
-
-def _agip_line(cuit, nro, aliquot):
-    """Layout AGIP (archivos separados Per/Ret): col3=nro, col4=CUIT, col8=alícuota."""
+def _split_file_line(cuit, nro, aliquot):
+    """Layout de archivos separados Per/Ret (hoy asignado a ARBA, ver
+    (2026-09-09) en `_get_padron_layouts`): col3=nro, col4=CUIT,
+    col8=alícuota. Confirmado contra dos archivos reales de ARBA."""
     return "h0;h1;h2;%s;%s;h5;h6;h7;%s\n" % (nro, cuit, aliquot)
+
+
+def _single_file_line(cuit, per, ret):
+    """Layout de archivo único (hoy asignado a AGIP como placeholder SIN
+    CONFIRMAR, ver (2026-09-09) en `_get_padron_layouts`): col3=CUIT,
+    col7=percepción, col8=retención."""
+    return "h0;h1;h2;%s;h4;h5;h6;%s;%s\n" % (cuit, per, ret)
 
 
 @tagged('post_install', '-at_install')
@@ -115,12 +119,15 @@ class TestPadronAliquot(TestArCommon):
     # Parseo de padrón (unitario, sin pasar por factura)
     # ---------------------------------------------------------------
 
-    def test_arba_layout_single_file_found(self):
-        """ARBA: un solo archivo, percepción en índice 7, retención en 8."""
-        content = _arba_line(ADHOC_CUIT, "3,87", "1,50") + _arba_line(OTHER_CUIT, "5,00", "2,00")
+    def test_arba_layout_two_files_found(self):
+        """ARBA (2026-09-09): dos archivos separados Per/Ret, alícuota en
+        índice 8. Confirmado contra dos archivos reales de ARBA."""
+        per_content = _split_file_line(ADHOC_CUIT, "31092026", "3,87")
+        ret_content = _split_file_line(ADHOC_CUIT, "31092026", "1,50")
         padron = self._create_padron(
-            self.state_arba, {'ARDJU008082026.TXT': content},
-            date(2026, 8, 1), date(2026, 8, 31),
+            self.state_arba,
+            {'PadronRGSPer092026.TXT': per_content, 'PadronRGSRet092026.TXT': ret_content},
+            date(2026, 9, 1), date(2026, 9, 30),
         )
         is_in_padron, aliquot_ret, aliquot_per = padron._get_aliquot(self.res_partner_adhoc)
         self.assertTrue(is_in_padron)
@@ -129,30 +136,31 @@ class TestPadronAliquot(TestArCommon):
 
     def test_arba_cuit_normalization_with_dashes(self):
         """El padrón trae el CUIT con guiones; partner.vat sin guiones (o viceversa): debe matchear igual."""
-        content = _arba_line(ADHOC_CUIT_DASHED, "4,25", "0,00")
+        content = _split_file_line(ADHOC_CUIT_DASHED, "31092026", "4,25")
         padron = self._create_padron(
-            self.state_arba, {'ARDJU008082026.TXT': content},
-            date(2026, 8, 1), date(2026, 8, 31),
+            self.state_arba, {'PadronRGSPer092026.TXT': content},
+            date(2026, 9, 1), date(2026, 9, 30),
         )
         is_in_padron, aliquot_ret, aliquot_per = padron._get_aliquot(self.res_partner_adhoc)
         self.assertTrue(is_in_padron)
         self.assertEqual(aliquot_per, 4.25)
 
-    def test_agip_layout_two_files_found(self):
-        """AGIP: dos archivos (Per/Ret) dentro del zip, alícuota en índice 8."""
-        per_content = _agip_line(ADHOC_CUIT, "31082026", "3,50")
-        ret_content = _agip_line(ADHOC_CUIT, "31082026", "1,25")
+    def test_agip_layout_single_file_found_UNVERIFIED(self):
+        """AGIP (2026-09-09): placeholder de archivo único, percepción en
+        índice 7, retención en 8. SIN CONFIRMAR contra un archivo real de
+        AGIP (ver advertencia en `_get_padron_layouts`) — este test solo
+        documenta el comportamiento asumido hoy, no lo valida."""
+        content = _single_file_line(ADHOC_CUIT, "3,87", "1,50") + _single_file_line(OTHER_CUIT, "5,00", "2,00")
         padron = self._create_padron(
-            self.state_agip,
-            {'PadronRGSPer082026.TXT': per_content, 'PadronRGSRet082026.TXT': ret_content},
-            date(2026, 8, 1), date(2026, 8, 31),
+            self.state_agip, {'ARDJU009092026.TXT': content},
+            date(2026, 9, 1), date(2026, 9, 30),
         )
         is_in_padron, aliquot_ret, aliquot_per = padron._get_aliquot(self.res_partner_adhoc)
         self.assertTrue(is_in_padron)
-        self.assertEqual(aliquot_per, 3.50)
-        self.assertEqual(aliquot_ret, 1.25)
+        self.assertEqual(aliquot_per, 3.87)
+        self.assertEqual(aliquot_ret, 1.50)
 
-    def test_agip_find_file_filters_by_period_not_first_match(self):
+    def test_arba_find_file_filters_by_period_not_first_match(self):
         """Regresión: `find_file` debe exigir que el nombre del archivo
         matchee el mes/año de vigencia del registro (``l10n_ar_padron_from_date``),
         no devolver el primer archivo "Per"/"Ret" que aparezca en el zip sin
@@ -166,47 +174,53 @@ class TestPadronAliquot(TestArCommon):
         test arma un zip con un archivo de un período equivocado (más
         antiguo en la lista) y el correcto (más adelante en la lista): si el
         bug estuviera presente, ganaría el equivocado.
+
+        (2026-09-09): movido de AGIP a ARBA junto con el resto de los tests
+        de archivos separados — ver `_get_padron_layouts`.
         """
         wrong_period_files = {
             # Período equivocado (setiembre/2025), aparece PRIMERO en el zip.
-            'PadronRGSPer092025.TXT': _agip_line(ADHOC_CUIT, "30092025", "9,99"),
-            'PadronRGSRet092025.TXT': _agip_line(ADHOC_CUIT, "30092025", "8,88"),
+            'PadronRGSPer092025.TXT': _split_file_line(ADHOC_CUIT, "30092025", "9,99"),
+            'PadronRGSRet092025.TXT': _split_file_line(ADHOC_CUIT, "30092025", "8,88"),
         }
         correct_period_files = {
-            # Período correcto (agosto/2026), la vigencia configurada abajo.
-            'PadronRGSPer082026.TXT': _agip_line(ADHOC_CUIT, "31082026", "4,75"),
-            'PadronRGSRet082026.TXT': _agip_line(ADHOC_CUIT, "31082026", "1,00"),
+            # Período correcto (setiembre/2026), la vigencia configurada abajo.
+            'PadronRGSPer092026.TXT': _split_file_line(ADHOC_CUIT, "30092026", "4,75"),
+            'PadronRGSRet092026.TXT': _split_file_line(ADHOC_CUIT, "30092026", "1,00"),
         }
         padron = self._create_padron(
-            self.state_agip,
+            self.state_arba,
             {**wrong_period_files, **correct_period_files},
-            date(2026, 8, 1), date(2026, 8, 31),
+            date(2026, 9, 1), date(2026, 9, 30),
         )
 
         with padron.descompress_file(padron.file_padron) as zip_file:
-            self.assertEqual(padron.find_file(zip_file, "Per"), "PadronRGSPer082026.TXT")
-            self.assertEqual(padron.find_file(zip_file, "Ret"), "PadronRGSRet082026.TXT")
+            self.assertEqual(padron.find_file(zip_file, "Per"), "PadronRGSPer092026.TXT")
+            self.assertEqual(padron.find_file(zip_file, "Ret"), "PadronRGSRet092026.TXT")
 
         is_in_padron, aliquot_ret, aliquot_per = padron._get_aliquot(self.res_partner_adhoc)
         self.assertTrue(is_in_padron)
         self.assertEqual(aliquot_per, 4.75)
         self.assertEqual(aliquot_ret, 1.00)
 
-    def test_agip_per_and_ret_use_their_own_aliquot_column(self):
-        """Regresión: la resolución de AGIP ("Per"/"Ret" en archivos
-        separados) debe leer la columna de alícuota correspondiente a cada
-        tipo de archivo (`aliquot_per_idx` para "Per", `aliquot_ret_idx`
-        para "Ret"), no siempre `aliquot_ret_idx` para ambos.
+    def test_arba_per_and_ret_use_their_own_aliquot_column(self):
+        """Regresión: la resolución de archivos separados Per/Ret debe leer
+        la columna de alícuota correspondiente a cada tipo de archivo
+        (`aliquot_per_idx` para "Per", `aliquot_ret_idx` para "Ret"), no
+        siempre `aliquot_ret_idx` para ambos.
 
-        Con el layout real de AGIP (`aliquot_ret_idx == aliquot_per_idx == 8`)
+        Con el layout real de ARBA (`aliquot_ret_idx == aliquot_per_idx == 8`)
         este bug no tiene efecto visible, así que se usa acá un layout
         ficticio con índices distintos para poder detectarlo: si el bug
         estuviera presente, `find_aliquot` leería la columna de retención
         también para el archivo "Per".
+
+        (2026-09-09): movido de AGIP a ARBA junto con el resto de los tests
+        de archivos separados — ver `_get_padron_layouts`.
         """
         cuit_idx, nro_idx, per_idx, ret_idx = 4, 3, 8, 9
         fake_layout = {
-            'base.state_ar_c': {
+            'base.state_ar_b': {
                 'single_file': False,
                 'cuit_idx': cuit_idx,
                 'nro_idx': nro_idx,
@@ -219,12 +233,12 @@ class TestPadronAliquot(TestArCommon):
             values = ["h0", "h1", "h2", nro, cuit, "h5", "h6", "h7", per_value, ret_value]
             return ";".join(values) + "\n"
 
-        per_content = _fake_line(ADHOC_CUIT, "31082026", "4,75", "99,99")
-        ret_content = _fake_line(ADHOC_CUIT, "31082026", "99,99", "1,00")
+        per_content = _fake_line(ADHOC_CUIT, "30092026", "4,75", "99,99")
+        ret_content = _fake_line(ADHOC_CUIT, "30092026", "99,99", "1,00")
         padron = self._create_padron(
-            self.state_agip,
-            {'PadronRGSPer082026.TXT': per_content, 'PadronRGSRet082026.TXT': ret_content},
-            date(2026, 8, 1), date(2026, 8, 31),
+            self.state_arba,
+            {'PadronRGSPer092026.TXT': per_content, 'PadronRGSRet092026.TXT': ret_content},
+            date(2026, 9, 1), date(2026, 9, 30),
         )
 
         Padron = type(padron)
@@ -237,32 +251,31 @@ class TestPadronAliquot(TestArCommon):
 
     def test_cuit_not_found_is_distinguished_from_zero(self):
         """CUIT ausente del padrón: is_in_padron=False (distinto de 'alícuota real 0%')."""
-        content = _arba_line(OTHER_CUIT, "5,00", "2,00")
+        content = _split_file_line(OTHER_CUIT, "31092026", "5,00")
         padron = self._create_padron(
-            self.state_arba, {'ARDJU008082026.TXT': content},
-            date(2026, 8, 1), date(2026, 8, 31),
+            self.state_arba, {'PadronRGSPer092026.TXT': content},
+            date(2026, 9, 1), date(2026, 9, 30),
         )
         is_in_padron, aliquot_ret, aliquot_per = padron._get_aliquot(self.res_partner_adhoc)
         self.assertFalse(is_in_padron)
 
     def test_real_zero_aliquot_is_not_treated_as_not_inscripto(self):
         """CUIT presente con alícuota real 0,00: is_in_padron=True y aliquot=0.0."""
-        content = _arba_line(ADHOC_CUIT, "0,00", "0,00")
+        content = _split_file_line(ADHOC_CUIT, "31092026", "0,00")
         padron = self._create_padron(
-            self.state_arba, {'ARDJU008082026.TXT': content},
-            date(2026, 8, 1), date(2026, 8, 31),
+            self.state_arba, {'PadronRGSPer092026.TXT': content},
+            date(2026, 9, 1), date(2026, 9, 30),
         )
         is_in_padron, aliquot_ret, aliquot_per = padron._get_aliquot(self.res_partner_adhoc)
         self.assertTrue(is_in_padron)
         self.assertEqual(aliquot_per, 0.0)
-        self.assertEqual(aliquot_ret, 0.0)
 
     def test_padron_wrong_jurisdiction_layout_raises(self):
         """No se permite cargar un padrón para una jurisdicción sin parser implementado."""
         other_state = self.env.ref('base.state_ar_x')
         with self.assertRaises(Exception):
             self._create_padron(
-                other_state, {'foo.TXT': 'x'}, date(2026, 8, 1), date(2026, 8, 31),
+                other_state, {'foo.TXT': 'x'}, date(2026, 9, 1), date(2026, 9, 30),
             )
 
     # ---------------------------------------------------------------
@@ -272,48 +285,48 @@ class TestPadronAliquot(TestArCommon):
     def test_manual_partner_aliquot_has_priority(self):
         """Alta de partner con alícuota manual: tiene prioridad sobre el padrón."""
         self._create_padron(
-            self.state_arba, {'ARDJU008082026.TXT': _arba_line(ADHOC_CUIT, "3,87", "1,50")},
-            date(2026, 8, 1), date(2026, 8, 31),
+            self.state_arba, {'PadronRGSPer092026.TXT': _split_file_line(ADHOC_CUIT, "31092026", "3,87")},
+            date(2026, 9, 1), date(2026, 9, 30),
         )
         self.env['l10n_ar.partner.padron.aliquot'].create({
             'partner_id': self.res_partner_adhoc.id,
             'company_id': self.company_ri.id,
             'state_id': self.state_arba.id,
-            'from_date': date(2026, 8, 1),
-            'to_date': date(2026, 8, 31),
+            'from_date': date(2026, 9, 1),
+            'to_date': date(2026, 9, 30),
             'alicuota_percepcion': 9.99,
             'is_manual': True,
         })
         rate = self.tax_perc_arba._l10n_ar_get_padron_rate(
-            self.res_partner_adhoc, date(2026, 8, 15),
+            self.res_partner_adhoc, date(2026, 9, 15),
         )
         self.assertEqual(rate, 9.99)
 
     def test_no_padron_uses_tax_default_amount(self):
         """Sin padrón cargado para el período y sin alícuota manual: usa el % del impuesto (no inscripto)."""
         rate = self.tax_perc_arba._l10n_ar_get_padron_rate(
-            self.res_partner_adhoc, date(2026, 8, 15),
+            self.res_partner_adhoc, date(2026, 9, 15),
         )
         self.assertEqual(rate, self.tax_perc_arba.amount)
 
     def test_cuit_not_found_uses_tax_default_amount(self):
         self._create_padron(
-            self.state_arba, {'ARDJU008082026.TXT': _arba_line(OTHER_CUIT, "5,00", "2,00")},
-            date(2026, 8, 1), date(2026, 8, 31),
+            self.state_arba, {'PadronRGSPer092026.TXT': _split_file_line(OTHER_CUIT, "31092026", "5,00")},
+            date(2026, 9, 1), date(2026, 9, 30),
         )
         rate = self.tax_perc_arba._l10n_ar_get_padron_rate(
-            self.res_partner_adhoc, date(2026, 8, 15),
+            self.res_partner_adhoc, date(2026, 9, 15),
         )
         self.assertEqual(rate, self.tax_perc_arba.amount)
 
     def test_ratio_scales_resolved_rate(self):
         self._create_padron(
-            self.state_arba, {'ARDJU008082026.TXT': _arba_line(ADHOC_CUIT, "10,0", "0,00")},
-            date(2026, 8, 1), date(2026, 8, 31),
+            self.state_arba, {'PadronRGSPer092026.TXT': _split_file_line(ADHOC_CUIT, "31092026", "10,0")},
+            date(2026, 9, 1), date(2026, 9, 30),
         )
         self.tax_perc_arba.ratio = 50.0
         rate = self.tax_perc_arba._l10n_ar_get_padron_rate(
-            self.res_partner_adhoc, date(2026, 8, 15),
+            self.res_partner_adhoc, date(2026, 9, 15),
         )
         self.assertEqual(rate, 5.0)
 
@@ -329,10 +342,10 @@ class TestPadronAliquot(TestArCommon):
 
     def test_invoice_percepcion_computed_from_arba_padron(self):
         self._create_padron(
-            self.state_arba, {'ARDJU008082026.TXT': _arba_line(ADHOC_CUIT, "3,87", "1,50")},
-            date(2026, 8, 1), date(2026, 8, 31),
+            self.state_arba, {'PadronRGSPer092026.TXT': _split_file_line(ADHOC_CUIT, "31092026", "3,87")},
+            date(2026, 9, 1), date(2026, 9, 30),
         )
-        move = self._create_invoice(self.tax_perc_arba, '2026-08-15', price_unit=1000.0)
+        move = self._create_invoice(self.tax_perc_arba, '2026-09-15', price_unit=1000.0)
         applied_tax = self._perc_tax(move)
         self.assertEqual(len(applied_tax), 1)
         self.assertAlmostEqual(applied_tax.amount, 3.87)
@@ -340,25 +353,24 @@ class TestPadronAliquot(TestArCommon):
         tax_line = move.line_ids.filtered(lambda l: l.tax_line_id == applied_tax)
         self.assertAlmostEqual(sum(tax_line.mapped('balance')), -38.7, places=2)
 
-    def test_invoice_percepcion_computed_from_agip_padron_two_files(self):
+    def test_invoice_percepcion_computed_from_agip_padron_single_file_UNVERIFIED(self):
+        """SIN CONFIRMAR contra un archivo real de AGIP — ver advertencia en
+        `_get_padron_layouts`."""
         self._create_padron(
             self.state_agip,
-            {
-                'PadronRGSPer082026.TXT': _agip_line(ADHOC_CUIT, "31082026", "4,75"),
-                'PadronRGSRet082026.TXT': _agip_line(ADHOC_CUIT, "31082026", "1,00"),
-            },
-            date(2026, 8, 1), date(2026, 8, 31),
+            {'ARDJU009092026.TXT': _single_file_line(ADHOC_CUIT, "4,75", "1,00")},
+            date(2026, 9, 1), date(2026, 9, 30),
         )
-        move = self._create_invoice(self.tax_perc_agip, '2026-08-15', price_unit=1000.0)
+        move = self._create_invoice(self.tax_perc_agip, '2026-09-15', price_unit=1000.0)
         applied_tax = self._perc_tax(move)
         self.assertAlmostEqual(applied_tax.amount, 4.75)
 
     def test_invoice_percepcion_cuit_not_found_uses_default(self):
         self._create_padron(
-            self.state_arba, {'ARDJU008082026.TXT': _arba_line(OTHER_CUIT, "5,00", "2,00")},
-            date(2026, 8, 1), date(2026, 8, 31),
+            self.state_arba, {'PadronRGSPer092026.TXT': _split_file_line(OTHER_CUIT, "31092026", "5,00")},
+            date(2026, 9, 1), date(2026, 9, 30),
         )
-        move = self._create_invoice(self.tax_perc_arba, '2026-08-15', price_unit=1000.0)
+        move = self._create_invoice(self.tax_perc_arba, '2026-09-15', price_unit=1000.0)
         applied_tax = self._perc_tax(move)
         self.assertEqual(applied_tax, self.tax_perc_arba)
         self.assertAlmostEqual(applied_tax.amount, 3.0)
@@ -366,11 +378,11 @@ class TestPadronAliquot(TestArCommon):
     def test_invoice_percepcion_vigencia_by_invoice_date_not_today(self):
         """La alícuota debe resolverse según la fecha del comprobante, no la de hoy."""
         self._create_padron(
-            self.state_arba, {'ARDJU008082026.TXT': _arba_line(ADHOC_CUIT, "3,87", "1,50")},
+            self.state_arba, {'PadronRGSPer082026.TXT': _split_file_line(ADHOC_CUIT, "31082026", "3,87")},
             date(2026, 8, 1), date(2026, 8, 31),
         )
         self._create_padron(
-            self.state_arba, {'ARDJU009092026.TXT': _arba_line(ADHOC_CUIT, "6,00", "1,50")},
+            self.state_arba, {'PadronRGSPer092026.TXT': _split_file_line(ADHOC_CUIT, "30092026", "6,00")},
             date(2026, 9, 1), date(2026, 9, 30),
         )
         move_august = self._create_invoice(self.tax_perc_arba, '2026-08-20', price_unit=1000.0)
@@ -390,7 +402,7 @@ class TestPadronAliquot(TestArCommon):
             'alicuota_percepcion': 7.5,
             'is_manual': True,
         })
-        move = self._create_invoice(self.tax_perc_arba, '2026-08-15', price_unit=1000.0)
+        move = self._create_invoice(self.tax_perc_arba, '2026-09-15', price_unit=1000.0)
         self.assertAlmostEqual(self._perc_tax(move).amount, 7.5)
 
     # ---------------------------------------------------------------
@@ -411,8 +423,8 @@ class TestPadronAliquot(TestArCommon):
         Contable puede crear impuestos nativamente).
         """
         self._create_padron(
-            self.state_arba, {'ARDJU008082026.TXT': _arba_line(ADHOC_CUIT, "3,87", "1,50")},
-            date(2026, 8, 1), date(2026, 8, 31),
+            self.state_arba, {'PadronRGSPer092026.TXT': _split_file_line(ADHOC_CUIT, "31092026", "3,87")},
+            date(2026, 9, 1), date(2026, 9, 30),
         )
         billing_user = self.env['res.users'].create({
             'name': 'Facturador (solo Facturación)',
@@ -430,7 +442,7 @@ class TestPadronAliquot(TestArCommon):
         self.assertFalse(billing_user.has_group('account.group_account_user'))
 
         move = self._create_invoice(
-            self.tax_perc_arba, '2026-08-15', price_unit=1000.0, user=billing_user,
+            self.tax_perc_arba, '2026-09-15', price_unit=1000.0, user=billing_user,
         )
         # No debe haber levantado AccessError, y la alícuota resuelta debe
         # ser la del padrón (no la de "no inscripto" del impuesto plantilla).

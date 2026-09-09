@@ -36,16 +36,18 @@
                         Padrones implementados:
                         <ul>
                             <li>
-                                <b>ARBA (Buenos Aires):</b> se sube el archivo TXT (o el .rar/.zip
-                                que lo contiene) publicado por ARBA con nombre de forma
-                                "ARDJUMMAAAA.rar/.TXT". Es un <b>único archivo</b>: cada línea trae
-                                tanto la percepción como la retención del CUIT.
-                            </li>
-                            <li>
-                                <b>AGIP (CABA):</b> se sube el archivo zip que descarga de AGIP, con
-                                nombre de forma "PadronRGSMMAAAA.zip". Ese zip contiene
+                                <b>ARBA (Buenos Aires):</b> se sube el archivo zip que publica ARBA,
+                                con nombre de forma "PadronRGSMMAAAA.zip". Ese zip contiene
                                 <b>dos archivos separados</b> ("...Per..." y "...Ret..."), uno con
                                 las alícuotas de percepción y otro con las de retención.
+                            </li>
+                            <li>
+                                <b>AGIP (CABA):</b> formato <b>sin confirmar todavía</b> contra un
+                                archivo real de AGIP (se asume, sin validar, un único archivo con
+                                nombre de forma "ARDJUMMAAAA.rar/.TXT" con percepción y retención
+                                en la misma línea). No cargar un padrón real de CABA a producción
+                                sin confirmar antes este formato contra un archivo bajado del
+                                portal de AGIP.
                             </li>
                         </ul>
                         No confundir el formato de ambas jurisdicciones: no son intercambiables.
