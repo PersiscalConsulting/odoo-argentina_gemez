@@ -189,12 +189,28 @@ class AccountTax(models.Model):
                 # AGIP: la percepción no se calculaba en la factura. Se
                 # distingue explícitamente False/'' (no encontrado) de
                 # cualquier otro valor (incluido "0.00", que sí es real).
+                #
+                # FIX 2026-09-11: el fallback de "no inscripto" leía siempre
+                # los campos de ARBA (company.arba_alicuota_no_sincripto_*)
+                # sin importar la jurisdicción real de `padron_file` — un
+                # CUIT no encontrado en el padrón de AGIP terminaba con el
+                # % de "no inscripto" configurado para ARBA. Se selecciona
+                # el par de campos según `padron_file.jurisdiction_id`.
+                if padron_file.jurisdiction_id.id == agip_tag.id:
+                    no_sincripto_retencion = company.agip_alicuota_no_sincripto_retencion
+                    no_sincripto_percepcion = company.agip_alicuota_no_sincripto_percepcion
+                elif padron_file.jurisdiction_id.id == cdba_tag.id:
+                    no_sincripto_retencion = company.cdba_alicuota_no_sincripto_retencion
+                    no_sincripto_percepcion = company.cdba_alicuota_no_sincripto_percepcion
+                else:
+                    no_sincripto_retencion = company.arba_alicuota_no_sincripto_retencion
+                    no_sincripto_percepcion = company.arba_alicuota_no_sincripto_percepcion
                 if alicuot_ret in (False, ''):
-                    alicuota_retencion = company.arba_alicuota_no_sincripto_retencion
+                    alicuota_retencion = no_sincripto_retencion
                 else:
                     alicuota_retencion = float(alicuot_ret)
                 if alicuot_per in (False, ''):
-                    alicuota_percepcion = company.arba_alicuota_no_sincripto_percepcion
+                    alicuota_percepcion = no_sincripto_percepcion
                 else:
                     alicuota_percepcion = float(alicuot_per)
                 return partner.arba_alicuot_ids.sudo().create({

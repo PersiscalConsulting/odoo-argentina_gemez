@@ -36,9 +36,9 @@
                         Padrones implementados:
                         <ul>
                             <li>ARBA: por lo general no es necesario cargarlo aquí ya que las alícuotas se obtienen automáticamente mediante webservice.
-                                Si igualmente desea cargarlo, debe subir el archivo zip que descarga de arba y que tiene nombre de forma "PadronRGSMMAAAA.zip
+                                Si igualmente desea cargarlo, debe subir el archivo zip que descarga de ARBA, con nombre de forma "PadronRGSMMAAAA.zip" — trae dos archivos separados (Per/Ret) adentro.
                             </li>
-                            <li>AGIP: debe subir el archivo zip que descarga de AGIP, con nombre de forma "PadronRGSMMAAAA.zip" (mismo formato de nombre que ARBA).
+                            <li>AGIP: debe subir el archivo que descarga de AGIP, con nombre de forma "ARDJUMMAAAA" — un único archivo con percepción y retención en la misma línea.
                             </li>
                         </ul>
                     </p>

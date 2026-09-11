@@ -49,20 +49,32 @@ class ResCompanyJurisdictionPadron(models.Model):
           - aliquot_ret_idx / aliquot_per_idx: índices de las alícuotas de
             retención y percepción.
           - single_file: True si ambas alícuotas vienen en la misma línea de
-            un único archivo (ARBA); False si vienen en dos archivos
-            separados "Per"/"Ret" con el mismo índice de alícuota (AGIP).
+            un único archivo (AGIP); False si vienen en dos archivos
+            separados "Per"/"Ret" con el mismo índice de alícuota (ARBA).
         """
         return {
-            # ARBA (Buenos Aires): CORREGIDO 2026-09-02 — un único archivo
-            # (formato "ARDJUMMAAAA.rar/.TXT"), cada línea trae percepción
-            # (índice 7) y retención (índice 8). Confirmado directamente
-            # por el cliente contra el archivo real ARDJU008082026.rar —
-            # este layout estaba antes asignado a la jurisdicción
-            # equivocada (etiquetado como AGIP), lo que hacía que el CUIT
-            # se buscara en la columna incorrecta del padrón real de cada
-            # jurisdicción y la alícuota nunca matcheara (quedando en 0
-            # por el fallback de "no inscripto").
+            # ARBA (Buenos Aires): CORREGIDO 2026-09-11 — dos archivos
+            # separados, "Per" y "Ret" (formato "PadronRGSMMAAAA.zip", con
+            # "PadronRGSPer.../PadronRGSRet..." adentro), mismo layout en
+            # ambos, la alícuota relevante está en el índice 8. Confirmado
+            # directamente por el cliente (dueño del dato) el 2026-09-11,
+            # tras un commit intermedio (627dcef9, 2026-09-02) que había
+            # invertido este mapeo basándose en una confirmación posterior
+            # contradicha por el propio cliente el mismo día que se hizo
+            # esta corrección — ver memoria de proyecto para la cronología
+            # completa de idas y vueltas sobre esta identidad.
             'l10n_ar_ux.tag_tax_jurisdiccion_902': {
+                'single_file': False,
+                'cuit_idx': 4,
+                'nro_idx': 3,
+                'aliquot_ret_idx': 8,
+                'aliquot_per_idx': 8,
+            },
+            # AGIP (CABA): CORREGIDO 2026-09-11 — un único archivo (formato
+            # "ARDJUMMAAAA.rar/.TXT"), cada línea trae percepción (índice 7)
+            # y retención (índice 8). Confirmado directamente por el cliente
+            # el 2026-09-11 — ver nota arriba.
+            'l10n_ar_ux.tag_tax_jurisdiccion_901': {
                 'single_file': True,
                 'cuit_idx': 3,
                 # No expone un número de comprobante propio; se usa el
@@ -70,29 +82,6 @@ class ResCompanyJurisdictionPadron(models.Model):
                 'nro_idx': False,
                 'aliquot_ret_idx': 8,
                 'aliquot_per_idx': 7,
-            },
-            # AGIP (CABA): CORREGIDO 2026-09-02 — dos archivos separados,
-            # "Per" y "Ret" (formato "PadronRGSMMAAAA.zip", con
-            # "PadronRGSPer.../PadronRGSRet..." adentro), mismo layout en
-            # ambos, la alícuota relevante está en el índice 8. Confirmado
-            # directamente por el cliente contra el archivo real
-            # PadronRGS082026.zip. Es la misma estructura que antes estaba
-            # (mal) asignada a ARBA — ver nota arriba.
-            #
-            # nro_idx=3 apunta a la Fecha Hasta (vigencia), NO a un número
-            # de comprobante real — ninguna de las dos jurisdicciones
-            # expone un identificador de comprobante propio, confirmado
-            # contra el archivo real (índice 3 = "31082026", una fecha).
-            # Se deja documentado pero sigue siendo un dato incorrecto en
-            # numero_comprobante; no se corrige acá porque cambiar qué se
-            # guarda ahí es una decisión de negocio aparte, no de mapeo de
-            # jurisdicción.
-            'l10n_ar_ux.tag_tax_jurisdiccion_901': {
-                'single_file': False,
-                'cuit_idx': 4,
-                'nro_idx': 3,
-                'aliquot_ret_idx': 8,
-                'aliquot_per_idx': 8,
             },
         }
 
